@@ -31,7 +31,7 @@ from torch.optim.lr_scheduler import ReduceLROnPlateau
 # ── project imports ────────────────────────────────────────────────────────────
 sys.path.insert(0, os.path.dirname(__file__))
 from tok.bpe_tokenizer import ChoppedTokenizer, CommonTokenizer, build_tokenizers
-from data.dataset import build_dataloader
+from data.dataset import build_dataloader, build_train_val_dataloaders
 from models.rnn_attention import RNNSeq2Seq
 from models.lstm_attention import LSTMSeq2Seq
 from config import (
@@ -160,17 +160,13 @@ def run_experiment(
     lang: str = "en",
 ):
     train_csv = train_csv or TRAIN_CSV
-    # If no test_csv given, fall back to explicit TEST_CSV only if it exists,
-    # otherwise reuse train_csv (avoids crash when lang8_test.csv is absent).
-    if test_csv is None:
-        test_csv = TEST_CSV if os.path.exists(TEST_CSV) else train_csv
     exp_name  = f"{lang}_{model_name}_{tok_config}"
 
     print(f"\n{'='*60}")
     print(f"  Experiment : {exp_name}")
     print(f"  Language   : {lang}")
     print(f"  Train CSV  : {train_csv}")
-    print(f"  Test  CSV  : {test_csv}")
+    print(f"  Val source : {'10% split from train' if test_csv is None else test_csv}")
     print(f"  Device     : {device}")
     print(f"{'='*60}")
 
@@ -181,16 +177,26 @@ def run_experiment(
     src_tok, tgt_tok = get_tokenizers_for_config(tok_config, chopped, common)
 
     # ── Data loaders ──────────────────────────────────────────────────────────
-    train_loader = build_dataloader(
-        train_csv, src_tok, tgt_tok,
-        batch_size=hp["batch_size"], shuffle=True,
-        max_len=hp["max_len"], max_samples=max_samples,
-    )
-    test_loader = build_dataloader(
-        test_csv, src_tok, tgt_tok,
-        batch_size=hp["batch_size"], shuffle=False,
-        max_len=hp["max_len"], max_samples=max_samples,
-    )
+    # If an explicit test_csv is given, use it as the validation set.
+    # Otherwise split 10% off train_csv so the test CSV stays unseen.
+    if test_csv is not None:
+        train_loader = build_dataloader(
+            train_csv, src_tok, tgt_tok,
+            batch_size=hp["batch_size"], shuffle=True,
+            max_len=hp["max_len"], max_samples=max_samples,
+        )
+        val_loader = build_dataloader(
+            test_csv, src_tok, tgt_tok,
+            batch_size=hp["batch_size"], shuffle=False,
+            max_len=hp["max_len"], max_samples=max_samples,
+        )
+    else:
+        train_loader, val_loader = build_train_val_dataloaders(
+            train_csv, src_tok, tgt_tok,
+            val_split=0.1,
+            batch_size=hp["batch_size"],
+            max_len=hp["max_len"], max_samples=max_samples,
+        )
 
     # ── Model ─────────────────────────────────────────────────────────────────
     src_vocab = src_tok.vocab_size_actual()
@@ -215,7 +221,7 @@ def run_experiment(
             model, train_loader, optimizer, criterion, device,
             hp["clip"], hp["tf_ratio"]
         )
-        val_loss = eval_epoch(model, test_loader, criterion, device)
+        val_loss = eval_epoch(model, val_loader, criterion, device)
         scheduler.step(val_loss)
         elapsed = time.time() - t0
 
@@ -243,7 +249,7 @@ def run_experiment(
                     "lang": lang,
                     "tok_dir": tok_dir,
                     "train_csv": train_csv,
-                    "test_csv": test_csv,
+                    "val_source": test_csv if test_csv else "10% split from train",
                 },
                 ckpt_path,
             )

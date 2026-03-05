@@ -59,20 +59,24 @@ incorrect sentence              incorrect sentence
 ## Training
 
 ```bash
-# Single model + single config
+# Single model + single config  (val split auto-carved from train_csv)
 python train.py --model lstm --tok_config common_common \
-    --train_csv data/tamil_train.csv --test_csv data/tamil_test.csv --lang ta
+    --train_csv data/tamil_train.csv --lang ta
 
 # All 6 experiments at once (2 models × 3 configs)
 python train.py --run_all \
-    --train_csv data/tamil_train.csv --test_csv data/tamil_test.csv --lang ta
+    --train_csv data/tamil_train.csv --lang ta
 
 # All 3 configs for one model
 for cfg in chopped_common common_common chopped_chopped; do
   python train.py --model lstm --tok_config $cfg \
-      --train_csv data/tamil_train.csv --test_csv data/tamil_test.csv --lang ta
+      --train_csv data/tamil_train.csv --lang ta
 done
 ```
+
+> **Note:** `--test_csv` is intentionally omitted during training.  
+> A 10% validation split is carved automatically from `--train_csv` to monitor val loss.  
+> The test CSV is used only for final evaluation (`evaluation/evaluate.py`).
 
 ### Key flags
 

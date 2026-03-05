@@ -12,7 +12,7 @@ Usage:
 
 import csv
 import torch
-from torch.utils.data import Dataset, DataLoader
+from torch.utils.data import Dataset, DataLoader, random_split
 from torch.nn.utils.rnn import pad_sequence
 from typing import List, Tuple, Optional
 
@@ -121,9 +121,7 @@ def build_dataloader(
     max_samples: Optional[int] = None,
     num_workers: int = 2,
 ) -> DataLoader:
-    """
-    Build a DataLoader for the given CSV.
-    """
+    """Build a DataLoader from a CSV file."""
     dataset = GECDataset(
         csv_path=csv_path,
         src_tokenizer=src_tokenizer,
@@ -140,3 +138,45 @@ def build_dataloader(
         pin_memory=True,
     )
     return loader
+
+
+def build_train_val_dataloaders(
+    csv_path: str,
+    src_tokenizer,
+    tgt_tokenizer,
+    val_split: float = 0.1,
+    batch_size: int = 64,
+    max_len: int = 128,
+    max_samples: Optional[int] = None,
+    num_workers: int = 2,
+    seed: int = 42,
+) -> Tuple[DataLoader, DataLoader]:
+    """
+    Load one CSV, split it into train/val (no test CSV needed).
+    val_split=0.1 reserves 10% of the training data for validation.
+    The test CSV is kept completely unseen until final evaluation.
+    """
+    dataset = GECDataset(
+        csv_path=csv_path,
+        src_tokenizer=src_tokenizer,
+        tgt_tokenizer=tgt_tokenizer,
+        max_len=max_len,
+        max_samples=max_samples,
+    )
+    n_val   = max(1, int(len(dataset) * val_split))
+    n_train = len(dataset) - n_val
+    train_ds, val_ds = random_split(
+        dataset, [n_train, n_val],
+        generator=torch.Generator().manual_seed(seed)
+    )
+    print(f"[Split] train={n_train:,}  val={n_val:,}  (val_split={val_split})")
+
+    train_loader = DataLoader(
+        train_ds, batch_size=batch_size, shuffle=True,
+        collate_fn=collate_fn, num_workers=num_workers, pin_memory=True,
+    )
+    val_loader = DataLoader(
+        val_ds, batch_size=batch_size, shuffle=False,
+        collate_fn=collate_fn, num_workers=num_workers, pin_memory=True,
+    )
+    return train_loader, val_loader
