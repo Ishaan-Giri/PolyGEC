@@ -13,8 +13,8 @@ build/
 venv/
 env/
 
-# Checkpoints — large binary files; commit only if intentional
-checkpoints/*.pt
+# Checkpoints — large binary files and training histories
+checkpoints/
 
 # Tokenizer saved files — rebuilt from data at runtime
 tok/saved/

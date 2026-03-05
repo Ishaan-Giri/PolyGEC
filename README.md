@@ -1,78 +1,57 @@
 # PolyGEC — Multilingual Grammatical Error Correction
 
-## Project Overview
-PolyGEC compares two seq2seq architectures — **RNN with Attention** and **LSTM with Attention** — under three BPE tokenization configurations for the GEC task.
+Compares **RNN+Attention** and **LSTM+Attention** seq2seq models for GEC across three tokenization configurations and multiple languages.
 
 ---
 
 ## Project Structure
+
 ```
-project/
-├── tok/
-│   ├── bpe_tokenizer.py     # ChoppedTokenizer (BPE) + CommonTokenizer (word-level)
-│   └── saved/               # Saved tokenizer files (generated at runtime)
-│       ├── chopped_bpe.json
-│       └── common_word.json
-├── data/
-│   └── dataset.py           # GECDataset + DataLoader builder
-├── models/
-│   ├── rnn_attention.py     # Encoder-Decoder GRU + Bahdanau Attention
-│   └── lstm_attention.py    # Encoder-Decoder LSTM + Bahdanau Attention
-├── evaluation/
-│   └── evaluate.py          # GLEU, Corpus BLEU, Token Accuracy
-├── checkpoints/             # Saved model checkpoints (.pt files)
-├── train.py                 # Unified training script
+PolyGEC/
+├── config.py            # All paths and hyperparameters
+├── train.py             # Training script
+├── predict.py           # Inference script
 ├── requirements.txt
-└── README.md
+├── models/
+│   ├── rnn_attention.py   # BiGRU encoder + Bahdanau attention decoder
+│   └── lstm_attention.py  # BiLSTM encoder + Bahdanau attention decoder
+├── tok/
+│   └── bpe_tokenizer.py   # ChoppedTokenizer (BPE) + CommonTokenizer (word-level)
+├── data/
+│   └── dataset.py         # GECDataset + DataLoader
+├── evaluation/
+│   └── evaluate.py        # GLEU, Corpus BLEU, Token Accuracy
+└── checkpoints/           # Saved .pt model files (git-ignored)
 ```
-
----
-
-## Dataset
-- **Lang-8 Corpus** (`lang8_train.csv` / `lang8_test.csv`)
-- 180,000 training pairs / 20,000 test pairs
-- Format: `source` (incorrect sentence) → `target` (corrected sentence)
-
-Split: 90% train / 10% test (random shuffle, seed=42)
-
----
-
-## Tokenization Strategies
-
-| Config Name       | Source Tokenizer | Target Tokenizer |
-|-------------------|-----------------|-----------------|
-| `chopped_common`  | BPE (sub-word)  | Word-level      |
-| `common_common`   | Word-level      | Word-level      |
-| `chopped_chopped` | BPE (sub-word)  | BPE (sub-word)  |
-
-- **Chopped (BPE)**: vocab size = 8,000 sub-word units
-- **Common (Word)**: vocab size = 20,000 most-frequent words
-
----
-
-## Models
-
-### 1. RNN with Bahdanau Attention (`models/rnn_attention.py`)
-- Bidirectional GRU encoder
-- GRU decoder with additive (Bahdanau) attention
-- Reference: Bahdanau et al. (2015), ICLR
-
-### 2. LSTM with Bahdanau Attention (`models/lstm_attention.py`)
-- Multi-layer bidirectional LSTM encoder
-- LSTM decoder with additive (Bahdanau) attention
-- Captures long-term dependencies via cell state gating
-- Reference: Cherian & Balakrishnan (2022)
 
 ---
 
 ## Setup
 
 ```bash
-# Install dependencies
-pip install torch tokenizers sacrebleu numpy
+pip install -r requirements.txt
+```
 
-# Split dataset (if not already done)
-python split_lang8.py
+---
+
+## Tokenization Configs
+
+| Config            | Source        | Target        |
+|-------------------|---------------|---------------|
+| `chopped_common`  | BPE (8 000)   | Word (20 000) |
+| `common_common`   | Word (20 000) | Word (20 000) |
+| `chopped_chopped` | BPE (8 000)   | BPE (8 000)   |
+
+---
+
+## Data Format
+
+Training and test CSVs must have two columns. Either naming works:
+
+```
+src,trg               ← or →    source,target
+incorrect sentence              incorrect sentence
+...                             ...
 ```
 
 ---
@@ -80,62 +59,96 @@ python split_lang8.py
 ## Training
 
 ```bash
-# Train a single experiment
-python train.py --model lstm --tok_config chopped_common --epochs 15
+# Single model + single config
+python train.py --model lstm --tok_config common_common \
+    --train_csv data/tamil_train.csv --test_csv data/tamil_test.csv --lang ta
 
-# Train all 6 experiments (2 models × 3 tok configs)
-python train.py --run_all
+# All 6 experiments at once (2 models × 3 configs)
+python train.py --run_all \
+    --train_csv data/tamil_train.csv --test_csv data/tamil_test.csv --lang ta
 
-# Quick smoke test (small subset)
-python train.py --model rnn --tok_config common_common --max_samples 1000 --epochs 2
+# All 3 configs for one model
+for cfg in chopped_common common_common chopped_chopped; do
+  python train.py --model lstm --tok_config $cfg \
+      --train_csv data/tamil_train.csv --test_csv data/tamil_test.csv --lang ta
+done
 ```
 
-### Hyperparameters (defaults)
+### Key flags
 
-| Parameter     | Value  |
-|---------------|--------|
-| embed_dim     | 256    |
-| hidden_dim    | 512    |
-| enc_layers    | 2      |
-| dropout       | 0.3    |
-| batch_size    | 64     |
-| epochs        | 15     |
-| learning_rate | 1e-3   |
-| grad_clip     | 1.0    |
-| max_seq_len   | 100    |
-| teacher_force | 0.5    |
+| Flag | Default | Description |
+|------|---------|-------------|
+| `--model` | `lstm` | `rnn` or `lstm` |
+| `--tok_config` | `chopped_common` | tokenization config (see table above) |
+| `--run_all` | off | run all 6 experiments sequentially |
+| `--train_csv` | config default | path to training CSV |
+| `--test_csv` | config default | path to test/val CSV |
+| `--lang` | `en` | language tag used in checkpoint naming |
+| `--epochs` | 15 | training epochs |
+| `--batch_size` | 64 | batch size |
+| `--max_samples` | None | limit data size (debugging) |
+
+Checkpoints → `checkpoints/<lang>_<model>_<tok_config>_best.pt`  
+Tokenizers  → `tok/saved/<lang>/` (rebuilt automatically if missing)
 
 ---
 
 ## Evaluation
 
 ```bash
+# Single checkpoint
 python evaluation/evaluate.py \
-    --checkpoint checkpoints/lstm_chopped_common_best.pt \
-    --test_csv   lang8_test.csv
+    --checkpoint checkpoints/ta_lstm_common_common_best.pt \
+    --test_csv   data/tamil_test.csv
+
+# All checkpoints for a language → prints summary table, saves JSON
+python evaluation/evaluate.py \
+    --run_all --lang ta \
+    --test_csv   data/tamil_test.csv \
+    --save_json  results_ta.json
+
+# Filter by model or config
+python evaluation/evaluate.py --run_all --lang ta --model lstm \
+    --test_csv data/tamil_test.csv
+
+python evaluation/evaluate.py --run_all --lang ta --tok_config common_common \
+    --test_csv data/tamil_test.csv
 ```
 
-### Metrics
-- **GLEU** — Sentence-level BLEU variant optimised for GEC
-- **Corpus BLEU** — Overall translation quality (sacrebleu)
-- **Token Accuracy** — Exact token match rate
+**Metrics:** GLEU · Corpus BLEU · Token Accuracy
 
 ---
 
-## Experimental Design (3 × 2 Factorial)
+## Inference
 
-| Experiment            | Model | Tok Config      |
-|-----------------------|-------|-----------------|
-| rnn_chopped_common    | RNN   | chopped→common  |
-| rnn_common_common     | RNN   | common→common   |
-| rnn_chopped_chopped   | RNN   | chopped→chopped |
-| lstm_chopped_common   | LSTM  | chopped→common  |
-| lstm_common_common    | LSTM  | common→common   |
-| lstm_chopped_chopped  | LSTM  | chopped→chopped |
+```bash
+# Single sentence
+python predict.py \
+    --checkpoint checkpoints/ta_lstm_common_common_best.pt \
+    --sentence "இந்த வாக்கியம் தவறானது"
+
+# File (one sentence per line)
+python predict.py \
+    --checkpoint checkpoints/ta_lstm_common_common_best.pt \
+    --input_file  sentences.txt \
+    --output_file corrected.txt
+```
+
+---
+
+## Models
+
+| Model | Encoder | Decoder |
+|-------|---------|---------|
+| RNN   | 2-layer Bidirectional GRU  | GRU + Bahdanau attention  |
+| LSTM  | 2-layer Bidirectional LSTM | LSTM + Bahdanau attention |
+
+Both: embed_dim=256 · hidden_dim=512 · dropout=0.3
 
 ---
 
 ## References
-1. Bahdanau et al. (2015). *Neural Machine Translation by Jointly Learning to Align and Translate*. ICLR.
-2. Cherian & Balakrishnan (2022). *Evaluating Grammatical Correctness of Malayalam Text using improved Text GCN and LSTM*. IJETT.
-3. Sharma & Bhattacharyya (2025). *IndiGEC: Multilingual Grammar Error Correction*. EMNLP.
+
+1. Bahdanau et al. (2015). *Neural Machine Translation by Jointly Learning to Align and Translate.* ICLR.
+2. Sennrich et al. (2016). *Neural Machine Translation of Rare Words with Subword Units.* ACL.
+3. Sharma & Bhattacharyya (2025). *IndiGEC: Multilingual Grammar Error Correction.* EMNLP.
