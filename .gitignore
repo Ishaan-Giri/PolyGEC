@@ -25,6 +25,10 @@ data/*.csv
 # Jupyter
 .ipynb_checkpoints/
 
+# Evaluation results — auto-saved locally, not tracked in git
+results/*
+!results/.gitkeep
+
 # OS
 .DS_Store
 Thumbs.db

@@ -445,8 +445,61 @@ if __name__ == "__main__":
         exp_name = os.path.basename(args.checkpoint).replace("_best.pt", "")
         all_results[exp_name] = metrics
 
-    # ── Optionally save results to JSON ────────────────────────────────────────
-    if args.save_json and all_results:
-        with open(args.save_json, "w") as f:
+    # ── Auto-save results to results/ folder ──────────────────────────────────
+    if all_results:
+        import datetime
+        results_dir = os.path.join(os.path.dirname(__file__), "..", "results")
+        os.makedirs(results_dir, exist_ok=True)
+
+        # Build a filename stem from lang + timestamp
+        lang_tag  = args.lang or "all"
+        timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+        stem      = f"{lang_tag}_{timestamp}"
+
+        # 1. JSON — full numeric results
+        json_path = os.path.join(results_dir, f"{stem}.json")
+        with open(json_path, "w", encoding="utf-8") as f:
             json.dump(all_results, f, indent=2)
-        print(f"\n  Results saved → {args.save_json}")
+
+        # 2. Plain-text report — human-readable
+        txt_path = os.path.join(results_dir, f"{stem}.txt")
+        W = 108
+        lines = []
+        lines.append("=" * W)
+        lines.append(f"  PolyGEC Evaluation Report — {datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+        lines.append(f"  Test CSV : {args.test_csv}")
+        lines.append("=" * W)
+        hdr = (f"  {'Experiment':<34} {'GLEU':>6}  {'BLEU':>6}  {'TokAcc':>7}"
+               f"  {'Prec':>7}  {'Rec':>7}  {'F0.5':>7}"
+               f"  {'Lat(ms)':>8}  {'Size(MB)':>8}  {'Params':>12}")
+        lines.append(hdr)
+        lines.append(f"  {'─'*34}  {'─'*6}  {'─'*6}  {'─'*7}  {'─'*7}  {'─'*7}  {'─'*7}  {'─'*8}  {'─'*8}  {'─'*12}")
+        for name, m in sorted(all_results.items()):
+            if "error" in m:
+                lines.append(f"  {name:<34}  ERROR: {m['error']}")
+            else:
+                lines.append(
+                    f"  {name:<34}"
+                    f"  {m['gleu']:>6.2f}"
+                    f"  {m['bleu']:>6.2f}"
+                    f"  {m['token_acc']:>6.2f}%"
+                    f"  {m['precision']:>6.2f}%"
+                    f"  {m['recall']:>6.2f}%"
+                    f"  {m['f0.5']:>6.2f}%"
+                    f"  {m['latency_ms']:>8.2f}"
+                    f"  {m['size_mb']:>8.1f}"
+                    f"  {m['params']:>12,}"
+                )
+        lines.append("=" * W)
+        with open(txt_path, "w", encoding="utf-8") as f:
+            f.write("\n".join(lines) + "\n")
+
+        print(f"\n  ✓ Results auto-saved:")
+        print(f"      JSON : {json_path}")
+        print(f"      TXT  : {txt_path}")
+
+        # 3. Honour explicit --save_json if provided
+        if args.save_json:
+            with open(args.save_json, "w", encoding="utf-8") as f:
+                json.dump(all_results, f, indent=2)
+            print(f"      JSON : {args.save_json}  (--save_json override)")
