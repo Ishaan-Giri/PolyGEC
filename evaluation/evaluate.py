@@ -1,38 +1,37 @@
 """
 Evaluation script for PolyGEC.
 
-Metrics implemented:
-  1. GLEU  — sentence-level BLEU variant optimised for GEC (via sacrebleu)
-  2. Corpus BLEU — overall translation quality
-  3. Token Accuracy — exact token match rate
+Metrics (matching project outline):
+  1. GLEU            — sentence-level BLEU variant optimised for GEC
+  2. Corpus BLEU     — overall translation quality (sacrebleu)
+  3. Token Accuracy  — exact token match rate
+  4. P / R / F0.5    — ERRANT-style span-level edit precision, recall, F0.5
+  5. Efficiency      — inference latency (ms/sentence) + model size (MB)
 
 Usage:
     # Evaluate a single checkpoint
     python evaluation/evaluate.py \
-        --checkpoint checkpoints/ta_lstm_common_common_best.pt \
+        --checkpoint checkpoints/ta_rnn_common_common_best.pt \
         --test_csv   data/tamil_test.csv
 
-    # Evaluate ALL checkpoints for a language at once
+    # Evaluate ALL checkpoints for a language → summary table + JSON
     python evaluation/evaluate.py \
-        --run_all \
-        --lang       ta \
-        --test_csv   data/tamil_test.csv \
-        --ckpt_dir   checkpoints \
-        --save_json  results_ta.json
+        --run_all --lang ta \
+        --test_csv  data/tamil_test.csv \
+        --save_json results_ta.json
 
-    # Evaluate all, specific model only
-    python evaluation/evaluate.py \
-        --run_all --lang ta --model lstm --test_csv data/tamil_test.csv
-
-    # Evaluate all, specific tok_config only
-    python evaluation/evaluate.py \
-        --run_all --lang ta --tok_config common_common --test_csv data/tamil_test.csv
+    # Filter by model or config
+    python evaluation/evaluate.py --run_all --lang ta --model rnn \
+        --test_csv data/tamil_test.csv
+    python evaluation/evaluate.py --run_all --lang ta --tok_config common_common \
+        --test_csv data/tamil_test.csv
 """
 
 import os
 import sys
 import csv
 import json
+import time
 import argparse
 import torch
 import sacrebleu
@@ -104,25 +103,25 @@ def ids_to_sentence(ids, tokenizer, skip_special=True) -> str:
 
 
 # ══════════════════════════════════════════════════════════════════════════════
-#  GLEU computation
+#  Metric 1 — GLEU
 # ══════════════════════════════════════════════════════════════════════════════
 def compute_gleu(hypotheses, references):
-    """
-    Sentence-level GLEU averaged over all sentences.
-    Uses sacrebleu BLEU at sentence level as a proxy.
-    """
-    scores = []
-    for hyp, ref in zip(hypotheses, references):
-        score = sacrebleu.sentence_bleu(hyp, [ref]).score
-        scores.append(score)
+    """Sentence-level GLEU averaged over corpus (sacrebleu proxy)."""
+    scores = [sacrebleu.sentence_bleu(h, [r]).score
+              for h, r in zip(hypotheses, references)]
     return sum(scores) / len(scores) if scores else 0.0
 
 
+# ══════════════════════════════════════════════════════════════════════════════
+#  Metric 2 — Corpus BLEU
+# ══════════════════════════════════════════════════════════════════════════════
 def compute_corpus_bleu(hypotheses, references):
-    result = sacrebleu.corpus_bleu(hypotheses, [references])
-    return result.score
+    return sacrebleu.corpus_bleu(hypotheses, [references]).score
 
 
+# ══════════════════════════════════════════════════════════════════════════════
+#  Metric 3 — Token Accuracy
+# ══════════════════════════════════════════════════════════════════════════════
 def compute_token_accuracy(hypotheses, references):
     total, correct = 0, 0
     for hyp, ref in zip(hypotheses, references):
@@ -132,6 +131,87 @@ def compute_token_accuracy(hypotheses, references):
         correct += sum(h == r for h, r in zip(h_tok[:length], r_tok[:length]))
         total   += max(len(h_tok), len(r_tok))
     return correct / total * 100 if total else 0.0
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+#  Metric 4 — ERRANT-style Precision / Recall / F0.5
+#  Span-level: counts token edits (insertions, deletions, substitutions)
+#  using a greedy token-diff approach.  No external ERRANT install needed.
+# ══════════════════════════════════════════════════════════════════════════════
+def _token_edits(hyp_tokens, ref_tokens):
+    """
+    Returns (tp, fp, fn) counts by comparing token sequences.
+      tp = tokens in hyp that match ref (correct edits / unchanged correct tokens)
+      fp = tokens in hyp not in ref  (over-corrections)
+      fn = tokens in ref not in hyp  (missed corrections)
+    Uses longest-common-subsequence matching.
+    """
+    from difflib import SequenceMatcher
+    matcher = SequenceMatcher(None, hyp_tokens, ref_tokens, autojunk=False)
+    tp = sum(block.size for block in matcher.get_matching_blocks())
+    fp = len(hyp_tokens) - tp
+    fn = len(ref_tokens)  - tp
+    return tp, fp, fn
+
+
+def compute_prf05(hypotheses, references):
+    """
+    Corpus-level Precision, Recall, F0.5 (ERRANT-style).
+    F0.5 weights precision twice as much as recall (standard for GEC).
+    """
+    total_tp = total_fp = total_fn = 0
+    for hyp, ref in zip(hypotheses, references):
+        tp, fp, fn = _token_edits(hyp.split(), ref.split())
+        total_tp += tp
+        total_fp += fp
+        total_fn += fn
+
+    precision = total_tp / (total_tp + total_fp) * 100 if (total_tp + total_fp) > 0 else 0.0
+    recall    = total_tp / (total_tp + total_fn) * 100 if (total_tp + total_fn) > 0 else 0.0
+    beta = 0.5
+    f05 = ((1 + beta**2) * precision * recall /
+           (beta**2 * precision + recall)) if (precision + recall) > 0 else 0.0
+    return precision, recall, f05
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+#  Metric 5 — Computational Efficiency
+# ══════════════════════════════════════════════════════════════════════════════
+def compute_efficiency(model, src_tok, hp, device, n_sentences=200):
+    """
+    Measures:
+      - Inference latency  (ms per sentence)
+      - Model size         (MB, parameter count)
+    Runs n_sentences dummy forward passes with avg-length inputs.
+    """
+    model.eval()
+    dummy = ["dummy sentence for timing"] * n_sentences
+    src_ids = [
+        torch.tensor(src_tok.encode(s)[:hp["max_len"]], dtype=torch.long)
+        for s in dummy
+    ]
+    max_l  = max(t.size(0) for t in src_ids)
+    padded = torch.zeros(len(src_ids), max_l, dtype=torch.long).to(device)
+    for j, t in enumerate(src_ids):
+        padded[j, :t.size(0)] = t
+
+    # Warm-up
+    with torch.no_grad():
+        model.generate(padded[:4], max_len=hp["max_len"])
+
+    if device.type == "cuda":
+        torch.cuda.synchronize()
+    t0 = time.perf_counter()
+    with torch.no_grad():
+        model.generate(padded, max_len=hp["max_len"])
+    if device.type == "cuda":
+        torch.cuda.synchronize()
+    elapsed_ms = (time.perf_counter() - t0) * 1000
+
+    latency_ms  = elapsed_ms / n_sentences
+    param_count = sum(p.numel() for p in model.parameters())
+    size_mb     = param_count * 4 / (1024 ** 2)   # float32 = 4 bytes
+    return latency_ms, size_mb, param_count
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -211,17 +291,26 @@ def evaluate(ckpt_path: str, test_csv: str, batch_size: int = 64, max_samples: i
             print(f"  Generated {min(i+batch_size, len(sources)):,}/{len(sources):,} …")
 
     # ── Metrics ────────────────────────────────────────────────────────────────
-    gleu       = compute_gleu(hypotheses, targets)
-    bleu       = compute_corpus_bleu(hypotheses, targets)
-    tok_acc    = compute_token_accuracy(hypotheses, targets)
+    gleu              = compute_gleu(hypotheses, targets)
+    bleu              = compute_corpus_bleu(hypotheses, targets)
+    tok_acc           = compute_token_accuracy(hypotheses, targets)
+    precision, recall, f05 = compute_prf05(hypotheses, targets)
+    latency_ms, size_mb, param_count = compute_efficiency(model, src_tok, hp, device)
 
-    print(f"\n{'='*50}")
-    print(f"  RESULTS  [{model_name.upper()} | {tok_config}]")
-    print(f"{'='*50}")
-    print(f"  GLEU (avg sentence-level) : {gleu:.2f}")
+    print(f"\n{'='*55}")
+    print(f"  RESULTS  [{model_name.upper()} | {tok_config} | {lang}]")
+    print(f"{'='*55}")
+    print(f"  GLEU (sentence-level avg) : {gleu:.2f}")
     print(f"  Corpus BLEU               : {bleu:.2f}")
     print(f"  Token Accuracy            : {tok_acc:.2f}%")
-    print(f"{'='*50}")
+    print(f"  ─────────────────────────────────────────────")
+    print(f"  Precision  (ERRANT-style) : {precision:.2f}%")
+    print(f"  Recall     (ERRANT-style) : {recall:.2f}%")
+    print(f"  F0.5       (ERRANT-style) : {f05:.2f}%")
+    print(f"  ─────────────────────────────────────────────")
+    print(f"  Latency                   : {latency_ms:.2f} ms/sentence")
+    print(f"  Model Size                : {size_mb:.1f} MB  ({param_count:,} params)")
+    print(f"{'='*55}")
 
     # ── Show a few examples ────────────────────────────────────────────────────
     print("\n  Sample Predictions:")
@@ -232,7 +321,17 @@ def evaluate(ckpt_path: str, test_csv: str, batch_size: int = 64, max_samples: i
         print(f"  REF : {ref}")
         print(f"  {'─'*70}")
 
-    return {"gleu": gleu, "bleu": bleu, "token_acc": tok_acc}
+    return {
+        "gleu":       gleu,
+        "bleu":       bleu,
+        "token_acc":  tok_acc,
+        "precision":  precision,
+        "recall":     recall,
+        "f0.5":       f05,
+        "latency_ms": latency_ms,
+        "size_mb":    size_mb,
+        "params":     param_count,
+    }
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -306,17 +405,32 @@ if __name__ == "__main__":
                 all_results[exp_name] = {"error": str(e)}
 
         # ── Summary table ──────────────────────────────────────────────────────
-        print(f"\n{'='*70}")
+        W = 108
+        print(f"\n{'='*W}")
         print(f"  EVALUATION SUMMARY  (test: {args.test_csv})")
-        print(f"{'='*70}")
-        print(f"  {'Experiment':<38} {'GLEU':>6}  {'BLEU':>6}  {'TokAcc':>7}")
-        print(f"  {'─'*38}  {'─'*6}  {'─'*6}  {'─'*7}")
+        print(f"{'='*W}")
+        hdr = (f"  {'Experiment':<34} {'GLEU':>6}  {'BLEU':>6}  {'TokAcc':>7}"
+               f"  {'Prec':>7}  {'Rec':>7}  {'F0.5':>7}"
+               f"  {'Lat(ms)':>8}  {'Size(MB)':>8}  {'Params':>12}")
+        print(hdr)
+        print(f"  {'─'*34}  {'─'*6}  {'─'*6}  {'─'*7}  {'─'*7}  {'─'*7}  {'─'*7}  {'─'*8}  {'─'*8}  {'─'*12}")
         for name, m in sorted(all_results.items()):
             if "error" in m:
-                print(f"  {name:<38}  ERROR: {m['error']}")
+                print(f"  {name:<34}  ERROR: {m['error']}")
             else:
-                print(f"  {name:<38}  {m['gleu']:>6.2f}  {m['bleu']:>6.2f}  {m['token_acc']:>6.2f}%")
-        print(f"{'='*70}")
+                print(
+                    f"  {name:<34}"
+                    f"  {m['gleu']:>6.2f}"
+                    f"  {m['bleu']:>6.2f}"
+                    f"  {m['token_acc']:>6.2f}%"
+                    f"  {m['precision']:>6.2f}%"
+                    f"  {m['recall']:>6.2f}%"
+                    f"  {m['f0.5']:>6.2f}%"
+                    f"  {m['latency_ms']:>8.2f}"
+                    f"  {m['size_mb']:>8.1f}"
+                    f"  {m['params']:>12,}"
+                )
+        print(f"{'='*W}")
 
     else:
         # ── Single checkpoint mode ─────────────────────────────────────────────

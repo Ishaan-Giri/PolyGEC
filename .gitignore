@@ -29,6 +29,13 @@ data/*.csv
 .DS_Store
 Thumbs.db
 
+# PDFs
+*.pdf
+
+# Logs / output text files
+*.txt
+!Tokenizers-Outline.txt
+
 # IDE
 .vscode/
 .idea/

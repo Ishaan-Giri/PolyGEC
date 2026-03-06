@@ -27,6 +27,7 @@ import torch
 import torch.nn as nn
 from torch.optim import Adam
 from torch.optim.lr_scheduler import ReduceLROnPlateau
+from tqdm import tqdm
 
 # ── project imports ────────────────────────────────────────────────────────────
 sys.path.insert(0, os.path.dirname(__file__))
@@ -106,17 +107,17 @@ def build_model(model_name: str, src_vocab: int, tgt_vocab: int, hp: dict, devic
 # ══════════════════════════════════════════════════════════════════════════════
 #  Train one epoch
 # ══════════════════════════════════════════════════════════════════════════════
-def train_epoch(model, loader, optimizer, criterion, device, clip, tf_ratio):
+def train_epoch(model, loader, optimizer, criterion, device, clip, tf_ratio, epoch, total_epochs):
     model.train()
     total_loss = 0.0
 
-    for src, tgt in loader:
+    bar = tqdm(loader, desc=f"  Epoch {epoch:>2}/{total_epochs} [train]",
+               unit="batch", leave=False, dynamic_ncols=True)
+    for src, tgt in bar:
         src, tgt = src.to(device), tgt.to(device)
         optimizer.zero_grad()
 
         output = model(src, tgt, teacher_forcing_ratio=tf_ratio)
-        # output: (batch, tgt_len-1, vocab)
-        # tgt   : (batch, tgt_len)  → target is tgt[:, 1:]
         output_flat = output.reshape(-1, output.size(-1))
         target_flat = tgt[:, 1:].reshape(-1)
 
@@ -125,6 +126,7 @@ def train_epoch(model, loader, optimizer, criterion, device, clip, tf_ratio):
         nn.utils.clip_grad_norm_(model.parameters(), clip)
         optimizer.step()
         total_loss += loss.item()
+        bar.set_postfix(loss=f"{loss.item():.4f}")
 
     return total_loss / len(loader)
 
@@ -133,16 +135,19 @@ def train_epoch(model, loader, optimizer, criterion, device, clip, tf_ratio):
 #  Evaluate one epoch
 # ══════════════════════════════════════════════════════════════════════════════
 @torch.no_grad()
-def eval_epoch(model, loader, criterion, device):
+def eval_epoch(model, loader, criterion, device, epoch, total_epochs):
     model.eval()
     total_loss = 0.0
-    for src, tgt in loader:
+    bar = tqdm(loader, desc=f"  Epoch {epoch:>2}/{total_epochs} [val  ]",
+               unit="batch", leave=False, dynamic_ncols=True)
+    for src, tgt in bar:
         src, tgt = src.to(device), tgt.to(device)
         output = model(src, tgt, teacher_forcing_ratio=0.0)
         output_flat = output.reshape(-1, output.size(-1))
         target_flat = tgt[:, 1:].reshape(-1)
         loss = criterion(output_flat, target_flat)
         total_loss += loss.item()
+        bar.set_postfix(loss=f"{loss.item():.4f}")
     return total_loss / len(loader)
 
 
@@ -219,9 +224,9 @@ def run_experiment(
         t0 = time.time()
         train_loss = train_epoch(
             model, train_loader, optimizer, criterion, device,
-            hp["clip"], hp["tf_ratio"]
+            hp["clip"], hp["tf_ratio"], epoch, hp["epochs"]
         )
-        val_loss = eval_epoch(model, val_loader, criterion, device)
+        val_loss = eval_epoch(model, val_loader, criterion, device, epoch, hp["epochs"])
         scheduler.step(val_loss)
         elapsed = time.time() - t0
 

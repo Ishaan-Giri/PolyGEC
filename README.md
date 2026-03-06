@@ -86,7 +86,6 @@ done
 | `--tok_config` | `chopped_common` | tokenization config (see table above) |
 | `--run_all` | off | run all 6 experiments sequentially |
 | `--train_csv` | config default | path to training CSV |
-| `--test_csv` | config default | path to test/val CSV |
 | `--lang` | `en` | language tag used in checkpoint naming |
 | `--epochs` | 15 | training epochs |
 | `--batch_size` | 64 | batch size |
@@ -119,7 +118,7 @@ python evaluation/evaluate.py --run_all --lang ta --tok_config common_common \
     --test_csv data/tamil_test.csv
 ```
 
-**Metrics:** GLEU · Corpus BLEU · Token Accuracy
+**Metrics:** GLEU · Corpus BLEU · Token Accuracy · Precision / Recall / F0.5 (ERRANT-style) · Inference Latency · Model Size
 
 ---
 

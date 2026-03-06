@@ -1,0 +1,183 @@
+      PolyGEC: A Multilingual Grammatical Error Correction System
+
+                                                  Tokenizers
+
+
+           Ishaan Giri                   Aditya Narayan Dwivedi                   Vipin Yadav
+           2025201091                          2025201026                         2025201013
+
+
+
+                      Abstract                          and tokenization granularity. By comparing recur-
+                                                        rent and Transformer-based models under different
+    Our project PolyGEC aims to automatically           BPE configurations, we aim to better understand
+    detect and transform erroneous sentences into
+                                                        the trade-offs involved in multilingual grammatical
+    correct ones. There are multiple tools avail-
+    able for globally popular languages like En-        error correction. The unique part of this project
+    glish, French, Spanish etc. But in a country        is that we aren’t just building one model. We are
+    like India which is culturally rich uses mul-       running a detailed experiment to compare three dif-
+    tiple languages our aim is to make this tool        ferent types of AI architectures (RNN, LSTM, and
+    work for native Indian languages like Hindi,        Transformer) to see which one works best when
+    Bengali, Marathi, Tamil, Telugu etc. Since all      we break words down into tiny pieces ("chopped"
+    the Indian languages have their own unique
+                                                        sub-words) versus keeping them as whole words.
+    structure. Our aim is to figure out which com-
+    bination of architecture and Byte pair Encod-
+                                                        2   Background and Related Work
+    ing technique gives highest level of precision
+    for different language. We are going to use         Grammatical Error Correction (GEC) has evolved
+    publicly available GEC datasets, some used in       from early rule-based systems to statistical meth-
+    previous related work and we are also going to
+                                                        ods, and currently, Neural Machine Translation
+    generate datasets by using python scripts to ex-
+    tract datasets from Wikipedia and add noise to      (NMT) models are the standard approach.
+    make it erroneous, which we are going to use        Neural Architectures Early NMT methods em-
+    for training and testing our architecture. We
+                                                        ployed Recurrent Neural Networks (RNNs) and
+    are going to evaluate GEC metrics of three ar-
+    chitecture - RNN with attention, LSTM with          Long Short-Term Memory (LSTM) networks to
+    Attention, and small-scale transformer. The         handle the sequential nature of language [9]. At-
+    main goal of this work is to provide insights       tention mechanisms were also introduced to align
+    into trade-offs between architecture and BPE        input and output sequences more effectively [10].
+    techniques strategies for GEC task for multiple     More recently, the Transformer model has become
+    languages.                                          the preferred architecture [8]. Its success is largely
+                                                        due to its ability to process data in parallel and
+1   Introduction
+                                                        effectively model relationships between distant
+Grammatical Error Correction (GEC) is one of the        words within a sentence.
+most important natural language processing task.
+                                                        Tokenization in Morphologically Rich Lan-
+It has various applications like education, interact-
+                                                        guages Standard word-level tokenization often
+ing with AI models, content creation, etc. Given
+                                                        struggles with complex languages, such as Tamil
+an erroneous grammer, the goal is to create a cor-
+                                                        or Telugu, due to their large vocabulary sizes and
+rected version that preserves the original meaning
+                                                        limited training data. Sub-word techniques, par-
+which is gramatically correct. Although significant
+                                                        ticularly Byte Pair Encoding (BPE), have proven
+progress has been made for foreign languages GEC,
+                                                        effective at reducing errors related to unknown or
+extending these systems to multiple languages re-
+                                                        out-of-vocabulary words.
+mains challenging due to linguistic diversity, lim-
+ited annotated data, and varying error distributions    GEC for Indic Languages While robust tools
+[1]. In this work, a multilingual GEC system is de-     like Grammarly serve English users, research on
+signed to analyze the effect of model architecture      Indian languages remains limited. Recent works
+have highlighted the challenges of correcting mor-             2. LSTM with Attention: To better capture
+phologically rich text in shared tasks [2]. Specific              long-term dependencies in complex sentence
+studies have explored architectures for Indian con-               structures [4].
+texts, such as LSTM-based correction for Malay-
+alam [4] and Transformer-based approaches for                  3. Small Scale Transformer: To evaluate the
+multilingual Indic GEC [7]. However, there is a                   efficacy of self-attention mechanisms on this
+lack of systematic research comparing the impact                  specific task without the computational over-
+of breaking words down “aggressively” into sub-                   head of large language models [8].
+words versus keeping them intact across different          4.2    Tokenization Strategies
+types of neural architectures.
+                                                           We are using two tokenization techniques:
+3     Dataset
+                                                               1. Aggressive Sub-word (Chopped): We are
+In this project we can use dataset of multiple in-                breaking sentences into words and further
+ternational languages (English, Turkish, Russian,                 breaking words into sub-words. For example:
+German etc) and Indian languages (Hindi, Marathi,                 “learning” into “learn” + “ing”.
+Bengali, Tamil, Telugu etc) for training and testing
+purpose. We will utilize a hybrid data strategy to             2. Common Word: We treat words as whole
+fulfil the need of required Languages.                            units (baseline) to test if the model performs
+                                                                  better without complex segmentation.
+    1. Public Corpora: There are multiple data set
+       available public on platform like hugging face,     4.3    Input-Output Configurations
+       Kaggle, GitHub, research paper etc [1, 2].          We are using a total of three combinations of tok-
+                                                           enization (input technique → output technique):
+    2. Synthetic Data Generation: There are plenty
+       of data available for foreign language but there        1. Chopped → Common
+       are very limited dataset available for native In-
+       dian languages like Bengali, Marathi, Telugu,           2. Common → Common
+       Tamil etc. So, for these languages we will use
+                                                               3. Chopped → Chopped
+       Python scripts to scrap data from Wikipedia
+       or other place to meet our project need [3].           We are using all these techniques into multiple
+                                                           languages separately to test which combination
+   The dataset will contain parallel incorrect-
+                                                           works best for which language.
+correct sentence pairs across multiple languages.
+Which will be partitioned into distinct training and       5     Evaluation
+testing subsets to rigorously train our models and
+evaluate their performance on unseen data.                 The models will be evaluated using standard GEC
+                                                           metrics to ensure comparability with existing re-
+4     Methodology                                          search:
+We are using a 3 × 3 factorial experimental de-                 • GLEU (Generalized Language Evaluation
+sign resulting in nine distinct model configurations.             Understanding): A variant of BLEU opti-
+This design enables specific analytical insights, in-             mized for sentence-level editing tasks.
+cluding morphological generalization (determining
+if “Chopped” tokenization benefits RNN/LSTM                     • ERRANT (MaxMatch / M 2 Scorer): To
+more than transformers) and evaluating which ar-                  explicitly evaluate precision, recall, and F0.5
+chitecture best leverages the “Chopped” and com-                  scores based on span-level edits.
+mon tokenization strategy.
+                                                                • Computational Efficiency: We will record
+4.1    Neural Architecture                                        Inference Latency (ms/sentence) and Model
+                                                                  Size to analyze the trade-off between accuracy
+We will implement and train three distinct model
+                                                                  and computational cost. This is vital to deter-
+architectures:
+                                                                  mine if lighter RNN models with "Chopped"
+    1. RNN with Attention: A baseline recurrent                   tokenization can compete with heavier Trans-
+       network [9].                                               formers.
+    • Morphological Analysis: A qualitative anal-
+      ysis of how well each model handles complex
+      inflections specific to languages like Tamil
+      and Marathi.
+
+
+
+ References
+[1] Sharma, U., & Bhattacharyya, P. (2025). IndiGEC:
+    Multilingual Grammar Error Correction for Low-
+    Resource Indian Languages. Proceedings of the 2025
+    Conference on Empirical Methods in Natural Lan-
+    guage Processing (EMNLP), 22382–22396. Associa-
+    tion for Computational Linguistics.
+[2] Bhattacharya, A., Goyal, P., & Ghosh, S. (2025).
+    Findings of the IndicGEC and IndicWG Shared Task
+    at BHASHA 2025. Proceedings of the 1st Work-
+    shop on Benchmarks, Harmonization, Annotation,
+    and Standardization for Human-Centric AI in Indian
+    Languages (BHASHA), 127–134. ACL Anthology.
+
+[3] Sonawane, A., Vishwakarma, S. K., & Singh, A. K.
+    (2020). Generating Inflectional Errors for Grammat-
+    ical Error Correction in Hindi. Proceedings of the
+    1st Conference of the Asia-Pacific Chapter of the
+    Association for Computational Linguistics (AACL).
+
+[4] Cherian, M., & Balakrishnan, K. (2022). Evalu-
+    ating the Grammatical Correctness of Malayalam
+    Text using improved Text GCN and LSTM. Interna-
+    tional Journal of Engineering Trends and Technology,
+    70(12), 160-169.
+
+[5] Kovalchuk, R., Romanyshyn, M., & Ivaniuk, P.
+    (2025). Introducing OmniGEC: A Silver Multilin-
+    gual Dataset for Grammatical Error Correction. Pro-
+    ceedings of the 4th Ukrainian Natural Language Pro-
+    cessing Workshop (UNLP), 162–178. Association for
+    Computational Linguistics.
+[6] Masciolini, A., et al. (2025).     MultiGEC: A
+    Dataset for Multilingual Grammatical Error Correc-
+    tion. Computational Second Language Acquisition
+    (CompSLA) Working Group.
+[7] Dhamecha, M., Jaat, S., Damor, G., & Mishra, P.
+    (2025). Team Horizon at BHASHA Task 1: Multilin-
+    gual IndicGEC with Transformer-based Grammatical
+    Error Correction Models. Proceedings of the 1st
+    Workshop on BHASHA, 142–146. ACL Anthology.
+[8] Vaswani, A. et al. (2017). Attention Is All You Need.
+    NeurIPS.
+[9] Bahdanau, D. et al. (2015). Neural Machine Trans-
+    lation by Jointly Learning to Align and Translate.
+    ICLR.
+[10] Luong, M.-T. et al. (2015). Effective Approaches
+    to Attention-based Neural Machine Translation.
+    EMNLP.
+
